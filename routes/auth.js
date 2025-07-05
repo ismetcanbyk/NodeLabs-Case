@@ -1,43 +1,55 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
-import { authenticateToken } from '../middleware/auth.js';
+import authenticateToken from '../middleware/auth.js';
+import redisService from '../services/redisService.js';
 
 const router = express.Router();
 
+// Register
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password, profile } = req.body;
+    const { username, email, password } = req.body;
 
+    // Validation
     if (!username || !email || !password) {
       return res.status(400).json({
-        error: 'Username, email, and password are required'
+        error: 'All fields are required',
+        required: ['username', 'email', 'password']
       });
     }
 
+    // Check if user already exists
     const existingUser = await User.findOne({
       $or: [{ email }, { username }]
     });
 
     if (existingUser) {
-      return res.status(400).json({
+      return res.status(409).json({
         error: 'User already exists with this email or username'
       });
     }
 
+    // Create user (password will be hashed by pre-save middleware)
     const user = new User({
       username,
       email,
-      password,
-      profile: profile || {}
+      password
     });
 
     await user.save();
 
-    const token = jwt.sign(
-      { id: user._id, email: user.email },
-      process.env.JWT_SECRET || 'fallback_secret',
+    // Generate tokens
+    const accessToken = jwt.sign(
+      { userId: user._id, username: user.username },
+      process.env.JWT_SECRET,
       { expiresIn: '24h' }
+    );
+
+    const refreshToken = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
     );
 
     res.status(201).json({
@@ -46,20 +58,19 @@ router.post('/register', async (req, res) => {
         id: user._id,
         username: user.username,
         email: user.email,
-        role: user.role,
-        fullName: user.fullName
+        isActive: user.isActive,
       },
-      token,
+      accessToken,
+      refreshToken
     });
+
   } catch (error) {
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({ error: errors.join(', ') });
-    }
-    res.status(500).json({ error: error.message });
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
+// Login
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -70,77 +81,143 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const user = await User.findByEmail(email);
-
-    if (!user || !user.isActive) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+    // Find user
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) {
+      return res.status(401).json({ error: 'Not found' });
     }
 
-    const isPasswordCorrect = await user.correctPassword(password);
-
-    if (!isPasswordCorrect) {
-      return res.status(401).json({ error: 'Password is incorrect' });
+    // Check password
+    const isPasswordValid = await user.correctPassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Incorrect password' });
     }
 
+    // Check if user is active
+    if (!user.isActive) {
+      return res.status(403).json({ error: 'Account is deactivated' });
+    }
+
+    // Update last login
     user.lastLogin = new Date();
-    await user.save({ validateBeforeSave: false });
+    await user.save();
 
-    const token = jwt.sign(
-      { id: user._id, email: user.email },
-      process.env.JWT_SECRET || 'fallback_secret',
+    // Generate tokens
+    const accessToken = jwt.sign(
+      { userId: user._id, username: user.username },
+      process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
+    const refreshToken = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     res.json({
-      token,
+      message: 'Login successful',
       user: {
         id: user._id,
         username: user.username,
         email: user.email,
-        role: user.role,
-        fullName: user.fullName,
+        isActive: user.isActive,
         lastLogin: user.lastLogin
-      }
+      },
+      accessToken,
+      refreshToken
     });
+
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.get('/me', authenticateToken, async (req, res) => {
+// Refresh Token
+router.post('/refresh', async (req, res) => {
   try {
-    res.json({
-      user: {
-        id: req.user._id,
-        username: req.user.username,
-        email: req.user.email,
-        role: req.user.role,
-        fullName: req.user.fullName,
-        profile: req.user.profile,
-        lastLogin: req.user.lastLogin,
-        createdAt: req.user.createdAt
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+    const { refreshToken } = req.body;
 
-router.post('/logout', authenticateToken, (req, res) => {
-  res.json({ message: 'Logged out successfully' });
-});
+    if (!refreshToken) {
+      return res.status(400).json({ error: 'Refresh token is required' });
+    }
 
-router.post('/refresh', authenticateToken, (req, res) => {
-  try {
-    const token = jwt.sign(
-      { id: req.user._id, email: req.user.email },
-      process.env.JWT_SECRET || 'fallback_secret',
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+
+    if (!user || !user.isActive) {
+      return res.status(403).json({ error: 'Invalid refresh token' });
+    }
+
+    // Generate new access token
+    const accessToken = jwt.sign(
+      { userId: user._id, username: user.username },
+      process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
-    res.json({ token });
+    res.json({
+      accessToken,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email
+      }
+    });
+
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Refresh token error:', error);
+    res.status(401).json({ error: 'Invalid refresh token' });
+  }
+});
+
+// Logout
+router.post('/logout', authenticateToken, async (req, res) => {
+  try {
+    const { tokenId, tokenExp, userId } = req.user;
+
+
+    if (tokenId && tokenExp) {
+      const expiresAt = new Date(tokenExp * 1000);
+      await redisService.addToBlacklist(tokenId, expiresAt);
+    }
+
+    await redisService.removeOnlineUser(userId.toString());
+
+    res.json({
+      message: 'Logout successful',
+      note: 'Token has been invalidated and removed from server'
+    });
+
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+router.get('/me', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        isActive: user.isActive,
+        lastLogin: user.lastLogin
+      }
+    });
+
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

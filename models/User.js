@@ -87,10 +87,11 @@ userSchema.statics.findActiveUsers = function () {
   return this.find({ isActive: true });
 };
 
-// Remove password from output
+// Remove password and duplicate id from output
 userSchema.methods.toJSON = function () {
   const userObject = this.toObject();
   delete userObject.password;
+  delete userObject.id;
   return userObject;
 };
 

@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NodeLabs - Socket.IO Test Suite</title>
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 20px;
+      background: #f5f5f5;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .section {
+      border: 1px solid #ddd;
+      margin: 10px 0;
+      padding: 15px;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+
+    .section h3 {
+      margin-top: 0;
+      color: #333;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 5px;
+    }
+
+    input,
+    textarea,
+    select {
+      margin: 5px;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    button {
+      margin: 5px;
+      padding: 10px 15px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .btn-primary {
+      background: #007bff;
+      color: white;
+    }
+
+    .btn-success {
+      background: #28a745;
+      color: white;
+    }
+
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+    }
+
+    .btn-warning {
+      background: #ffc107;
+      color: black;
+    }
+
+    .btn-info {
+      background: #17a2b8;
+      color: white;
+    }
+
+    .status {
+      font-weight: bold;
+      padding: 5px 10px;
+      border-radius: 4px;
+      margin-left: 10px;
+    }
+
+    .status.connected {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .status.disconnected {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .status.connecting {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    #logs {
+      height: 400px;
+      overflow-y: scroll;
+      border: 1px solid #ccc;
+      padding: 10px;
+      background: #f8f9fa;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+
+    .user-info {
+      background: #e7f3ff;
+      padding: 10px;
+      border-radius: 5px;
+      margin: 10px 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .info-box {
+      background: #e8f4fd;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #007bff;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1 style="text-align: center; color: #007bff;">🔌 NodeLabs - Socket.IO Test Suite</h1>
+
+    <div class="info-box">
+      <h4>ℹ️ Test Talimatları:</h4>
+      <p><strong>1.</strong> Önce Postman ile <code>/api/auth/login</code> veya <code>/api/auth/register</code> endpoint'ini kullanarak JWT token alın</p>
+      <p><strong>2.</strong> Aldığınız token'ı aşağıdaki "JWT Token" alanına yapıştırın</p>
+      <p><strong>3.</strong> "Connect to Socket" butonuna tıklayarak Socket.IO bağlantısını kurun</p>
+      <p><strong>4.</strong> Socket events'lerini test edin</p>
+    </div>
+
+    <div class="grid">
+      <!-- Token Entry Section -->
+      <div class="section">
+        <h3>🔑 JWT Token Entry</h3>
+        <div>
+          <input type="text" id="manualToken" placeholder="Paste JWT token here (from Postman login/register)" style="width: 100%; max-width: 500px;">
+          <button class="btn-warning" onclick="setToken()">Set Token</button>
+        </div>
+        <div id="tokenInfo" class="user-info" style="display: none;">
+          <strong>Token Status:</strong> <span id="tokenStatus">Ready</span><br>
+          <strong>Token Preview:</strong> <span id="tokenPreview" style="font-family: monospace; font-size: 10px;"></span>
+        </div>
+      </div>
+
+      <!-- Socket Connection -->
+      <div class="section">
+        <h3>🔌 Socket.IO Connection</h3>
+        <div>
+          <button class="btn-success" onclick="connectSocket()">Connect to Socket</button>
+          <button class="btn-danger" onclick="disconnectSocket()">Disconnect</button>
+          <span id="socketStatus" class="status disconnected">Disconnected</span>
+        </div>
+        <div style="margin-top: 10px;">
+          <strong>Socket ID:</strong> <span id="socketId">-</span><br>
+          <strong>Connection Status:</strong> <span id="connectionDetails">Not connected</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Room Management -->
+      <div class="section">
+        <h3>🏠 Room Management</h3>
+        <div>
+          <input type="text" id="roomId" placeholder="Conversation ID">
+          <button class="btn-success" onclick="joinRoom()">Join Room</button>
+          <button class="btn-danger" onclick="leaveRoom()">Leave Room</button>
+        </div>
+        <div style="margin-top: 10px;">
+          <button class="btn-info" onclick="getOnlineUsersInConversation()">Get Online Users in Conversation</button>
+        </div>
+      </div>
+
+      <!-- Real-time Messaging -->
+      <div class="section">
+        <h3>💬 Real-time Messaging</h3>
+        <div>
+          <input type="text" id="conversationId" placeholder="Conversation ID" style="width: 200px;"><br>
+          <textarea id="messageText" placeholder="Message content..." rows="3" style="width: 300px;"></textarea><br>
+          <select id="messageType">
+            <option value="text">Text Message</option>
+            <option value="auto">Auto Message</option>
+          </select>
+          <button class="btn-primary" onclick="sendSocketMessage()">Send via Socket</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Message Actions -->
+      <div class="section">
+        <h3>📨 Message Actions</h3>
+        <div>
+          <input type="text" id="markReadMessageId" placeholder="Message ID" style="width: 200px;">
+          <input type="text" id="markReadConvId" placeholder="Conversation ID" style="width: 200px;">
+          <button class="btn-warning" onclick="markMessageAsRead()">Mark as Read (Socket)</button>
+        </div>
+        <div style="margin-top: 10px;">
+          <input type="text" id="checkUserId" placeholder="User ID to check online status" style="width: 200px;">
+          <button class="btn-info" onclick="checkUserStatus()">Check User Online Status</button>
+        </div>
+      </div>
+
+      <!-- Socket Event Testing -->
+      <div class="section">
+        <h3>🎯 Socket Event Testing</h3>
+        <div>
+          <button class="btn-info" onclick="testCustomEvent()">Test Custom Event</button>
+          <button class="btn-warning" onclick="emitTypingEvent()">Emit Typing Event</button>
+          <button class="btn-success" onclick="pingServer()">Ping Server</button>
+        </div>
+        <div style="margin-top: 10px;">
+          <input type="text" id="customEventData" placeholder="Custom event data (JSON)" style="width: 300px;">
+          <button class="btn-primary" onclick="emitCustomEvent()">Emit Custom Event</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Event Logs -->
+    <div class="section">
+      <h3>📋 Socket Event Logs</h3>
+      <div id="logs"></div>
+      <div style="margin-top: 10px;">
+        <button class="btn-danger" onclick="clearLogs()">Clear Logs</button>
+        <button class="btn-info" onclick="exportLogs()">Export Logs</button>
+        <button class="btn-warning" onclick="toggleAutoScroll()">Toggle Auto Scroll</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let socket = null;
+    let currentToken = null;
+    let autoScrollEnabled = true;
+    const API_BASE = 'http://localhost:3000';
+
+    // Utility Functions
+    function log(message, type = 'info') {
+      const logs = document.getElementById('logs');
+      const time = new Date().toLocaleTimeString();
+      const colors = {
+        info: '#007bff',
+        success: '#28a745',
+        error: '#dc3545',
+        warning: '#ffc107',
+        socket: '#17a2b8',
+        event: '#6f42c1'
+      };
+
+      logs.innerHTML += `<div style="color: ${colors[type] || colors.info}; margin: 2px 0;">[${time}] ${message}</div>`;
+
+      if (autoScrollEnabled) {
+        logs.scrollTop = logs.scrollHeight;
+      }
+
+      console.log(`[${type.toUpperCase()}]`, message);
+    }
+
+    function showError(message) {
+      log(`❌ ERROR: ${message}`, 'error');
+      alert(`Error: ${message}`);
+    }
+
+    function showSuccess(message) {
+      log(`✅ SUCCESS: ${message}`, 'success');
+    }
+
+    function showWarning(message) {
+      log(`⚠️ WARNING: ${message}`, 'warning');
+    }
+
+    // Token Management
+    function setToken() {
+      const token = document.getElementById('manualToken').value.trim();
+      if (!token) {
+        showError('Please enter a JWT token');
+        return;
+      }
+
+      currentToken = token;
+      document.getElementById('tokenInfo').style.display = 'block';
+      document.getElementById('tokenStatus').textContent = 'Token Set';
+      document.getElementById('tokenPreview').textContent = token.substring(0, 50) + '...';
+      showSuccess('JWT Token set successfully');
+      log(`Token preview: ${token.substring(0, 50)}...`);
+    }
+
+    // Socket.IO Functions
+    function connectSocket() {
+      if (!currentToken) {
+        showError('Please set JWT token first');
+        return;
+      }
+
+      if (socket) {
+        socket.disconnect();
+      }
+
+      document.getElementById('socketStatus').textContent = 'Connecting...';
+      document.getElementById('socketStatus').className = 'status connecting';
+      document.getElementById('connectionDetails').textContent = 'Attempting connection...';
+
+      socket = io(API_BASE, {
+        auth: { token: currentToken },
+        transports: ['websocket', 'polling']
+      });
+
+      // Connection events
+      socket.on('connect', () => {
+        log('🔌 Socket connected successfully', 'socket');
+        document.getElementById('socketStatus').textContent = 'Connected';
+        document.getElementById('socketStatus').className = 'status connected';
+        document.getElementById('socketId').textContent = socket.id;
+        document.getElementById('connectionDetails').textContent = `Connected with Socket ID: ${socket.id}`;
+        showSuccess('Socket.IO connection established!');
+      });
+
+      socket.on('connect_error', (error) => {
+        log(`❌ Socket connection error: ${error.message}`, 'error');
+        document.getElementById('socketStatus').textContent = 'Connection Error';
+        document.getElementById('socketStatus').className = 'status disconnected';
+        document.getElementById('connectionDetails').textContent = `Error: ${error.message}`;
+        showError(`Socket connection failed: ${error.message}`);
+      });
+
+      socket.on('disconnect', (reason) => {
+        log(`🔌 Socket disconnected: ${reason}`, 'warning');
+        document.getElementById('socketStatus').textContent = 'Disconnected';
+        document.getElementById('socketStatus').className = 'status disconnected';
+        document.getElementById('socketId').textContent = '-';
+        document.getElementById('connectionDetails').textContent = `Disconnected: ${reason}`;
+      });
+
+      // User status events
+      socket.on('user_online', (data) => {
+        log(`🟢 User online: ${data.username} (ID: ${data.userId})`, 'event');
+      });
+
+      socket.on('user_offline', (data) => {
+        log(`🔴 User offline: ${data.username} (ID: ${data.userId})`, 'event');
+      });
+
+      // Room events
+      socket.on('room_joined', (data) => {
+        log(`🏠 Successfully joined room: ${data.conversationId}`, 'success');
+        showSuccess(`Joined conversation room: ${data.conversationId}`);
+      });
+
+      socket.on('room_left', (data) => {
+        log(`🚪 Left room: ${data.conversationId}`, 'warning');
+        showWarning(`Left conversation room: ${data.conversationId}`);
+      });
+
+      // Message events
+      socket.on('message_received', (data) => {
+        log(`📨 NEW MESSAGE RECEIVED:`, 'event');
+        log(`   From: ${data.from.username || data.from} (ID: ${data.from.id || 'unknown'})`, 'event');
+        log(`   Content: "${data.content.text || data.content}"`, 'event');
+        log(`   Conversation: ${data.conversationId}`, 'event');
+        log(`   Type: ${data.messageType || 'text'}${data.isAutoMessage ? ' (Auto)' : ''}`, 'event');
+        log(`   Time: ${new Date(data.timestamp).toLocaleString()}`, 'event');
+      });
+
+      socket.on('message_read', (data) => {
+        log(`✓ Message read notification:`, 'event');
+        log(`   Message ID: ${data.messageId}`, 'event');
+        log(`   Read by: ${data.readBy}`, 'event');
+        log(`   Conversation: ${data.conversationId}`, 'event');
+      });
+
+      // Online users list
+      socket.on('online_users_list', (data) => {
+        log(`👥 Online users in conversation (${data.count}):`, 'event');
+        log(`   Users: ${JSON.stringify(data.onlineUsers)}`, 'event');
+        log(`   Conversation: ${data.conversationId}`, 'event');
+      });
+
+      // Error handling
+      socket.on('error', (data) => {
+        log(`❌ Socket error received: ${data.message}`, 'error');
+        showError(`Socket Error: ${data.message}`);
+      });
+
+      // Custom events for testing
+      socket.on('custom_response', (data) => {
+        log(`🎯 Custom event response: ${JSON.stringify(data)}`, 'event');
+      });
+
+      socket.on('pong', (data) => {
+        log(`🏓 Pong received: ${JSON.stringify(data)}`, 'event');
+      });
+
+      socket.on('typing_response', (data) => {
+        log(`⌨️ Typing event response: ${JSON.stringify(data)}`, 'event');
+      });
+    }
+
+    function disconnectSocket() {
+      if (socket) {
+        socket.disconnect();
+        socket = null;
+        document.getElementById('socketStatus').textContent = 'Disconnected';
+        document.getElementById('socketStatus').className = 'status disconnected';
+        document.getElementById('socketId').textContent = '-';
+        document.getElementById('connectionDetails').textContent = 'Manually disconnected';
+        log('🔌 Socket disconnected manually', 'warning');
+        showWarning('Socket disconnected');
+      } else {
+        showWarning('Socket was not connected');
+      }
+    }
+
+    // Room Management Functions
+    function joinRoom() {
+      const roomId = document.getElementById('roomId').value.trim();
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!roomId) {
+        showError('Please enter conversation ID');
+        return;
+      }
+
+      socket.emit('join_room', { conversationId: roomId });
+      log(`🏠 Attempting to join room: ${roomId}`, 'info');
+    }
+
+    function leaveRoom() {
+      const roomId = document.getElementById('roomId').value.trim();
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!roomId) {
+        showError('Please enter conversation ID');
+        return;
+      }
+
+      socket.emit('leave_room', { conversationId: roomId });
+      log(`🚪 Attempting to leave room: ${roomId}`, 'info');
+    }
+
+    function getOnlineUsersInConversation() {
+      const roomId = document.getElementById('roomId').value.trim();
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!roomId) {
+        showError('Please enter conversation ID');
+        return;
+      }
+
+      socket.emit('get_online_users', { conversationId: roomId });
+      log(`👥 Requesting online users for conversation: ${roomId}`, 'info');
+    }
+
+    // Message Functions
+    function sendSocketMessage() {
+      const conversationId = document.getElementById('conversationId').value.trim();
+      const messageText = document.getElementById('messageText').value.trim();
+      const messageType = document.getElementById('messageType').value;
+
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!conversationId || !messageText) {
+        showError('Conversation ID and message text required');
+        return;
+      }
+
+      const messageData = {
+        conversationId,
+        content: { text: messageText },
+        messageType
+      };
+
+      socket.emit('send_message', messageData);
+      log(`📤 Sending message via Socket:`, 'info');
+      log(`   To conversation: ${conversationId}`, 'info');
+      log(`   Content: "${messageText}"`, 'info');
+      log(`   Type: ${messageType}`, 'info');
+
+      document.getElementById('messageText').value = '';
+      showSuccess('Message sent via Socket.IO');
+    }
+
+    function markMessageAsRead() {
+      const messageId = document.getElementById('markReadMessageId').value.trim();
+      const conversationId = document.getElementById('markReadConvId').value.trim();
+
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!messageId || !conversationId) {
+        showError('Message ID and Conversation ID required');
+        return;
+      }
+
+      socket.emit('mark_message_read', { messageId, conversationId });
+      log(`✓ Marking message as read via Socket:`, 'info');
+      log(`   Message ID: ${messageId}`, 'info');
+      log(`   Conversation: ${conversationId}`, 'info');
+    }
+
+    function checkUserStatus() {
+      const userId = document.getElementById('checkUserId').value.trim();
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!userId) {
+        showError('Please enter User ID');
+        return;
+      }
+
+      socket.emit('check_user_status', { userId });
+      log(`👤 Checking online status for user: ${userId}`, 'info');
+    }
+
+    // Socket Event Testing Functions
+    function testCustomEvent() {
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+
+      const testData = {
+        message: 'Hello from test suite!',
+        timestamp: new Date().toISOString(),
+        testId: Math.random().toString(36).substr(2, 9)
+      };
+
+      socket.emit('test_event', testData);
+      log(`🎯 Emitted test event: ${JSON.stringify(testData)}`, 'info');
+    }
+
+    function emitTypingEvent() {
+      const conversationId = document.getElementById('conversationId').value.trim();
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!conversationId) {
+        showError('Please enter conversation ID first');
+        return;
+      }
+
+      socket.emit('typing', { conversationId, isTyping: true });
+      log(`⌨️ Emitted typing event for conversation: ${conversationId}`, 'info');
+
+      // Stop typing after 3 seconds
+      setTimeout(() => {
+        if (socket) {
+          socket.emit('typing', { conversationId, isTyping: false });
+          log(`⌨️ Stopped typing for conversation: ${conversationId}`, 'info');
+        }
+      }, 3000);
+    }
+
+    function pingServer() {
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+
+      const pingData = {
+        timestamp: Date.now(),
+        message: 'ping'
+      };
+
+      socket.emit('ping', pingData);
+      log(`🏓 Pinged server with: ${JSON.stringify(pingData)}`, 'info');
+    }
+
+    function emitCustomEvent() {
+      const customData = document.getElementById('customEventData').value.trim();
+      if (!socket) {
+        showError('Socket not connected');
+        return;
+      }
+      if (!customData) {
+        showError('Please enter custom event data');
+        return;
+      }
+
+      try {
+        const parsedData = JSON.parse(customData);
+        socket.emit('custom_event', parsedData);
+        log(`🎯 Emitted custom event: ${customData}`, 'info');
+        document.getElementById('customEventData').value = '';
+      } catch (error) {
+        showError('Invalid JSON format for custom event data');
+      }
+    }
+
+    // Utility Functions
+    function clearLogs() {
+      document.getElementById('logs').innerHTML = '';
+      log('📋 Logs cleared', 'info');
+    }
+
+    function exportLogs() {
+      const logs = document.getElementById('logs').innerText;
+      const blob = new Blob([logs], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `socket-test-logs-${new Date().toISOString().split('T')[0]}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showSuccess('Logs exported successfully');
+    }
+
+    function toggleAutoScroll() {
+      autoScrollEnabled = !autoScrollEnabled;
+      const status = autoScrollEnabled ? 'enabled' : 'disabled';
+      showSuccess(`Auto scroll ${status}`);
+      log(`📜 Auto scroll ${status}`, 'info');
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      log('🚀 NodeLabs Socket.IO Test Suite initialized', 'success');
+      log('='.repeat(50), 'info');
+      log('INSTRUCTIONS:', 'info');
+      log('1. Get JWT token from Postman (login/register endpoint)', 'info');
+      log('2. Paste token in the JWT Token field above', 'info');
+      log('3. Click "Set Token" button', 'info');
+      log('4. Click "Connect to Socket" to establish connection', 'info');
+      log('5. Test various Socket.IO events and real-time features', 'info');
+      log('='.repeat(50), 'info');
+    });
+
+    // Add some example data for quick testing
+    window.addEventListener('load', () => {
+      // Set some example values for easier testing
+      document.getElementById('roomId').value = 'example_conversation_id';
+      document.getElementById('conversationId').value = 'example_conversation_id';
+      document.getElementById('customEventData').value = '{"test": "data", "value": 123}';
+    });
+  </script>
+</body>
+
+</html>

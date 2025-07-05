@@ -1,19 +1,13 @@
 import express from 'express';
 import Conversation from '../models/Conversation.js';
-import { authenticateToken } from '../middleware/auth.js';
+import authenticateToken from '../middleware/auth.js';
 
 const router = express.Router();
 
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { limit = 20, skip = 0 } = req.query;
-
-    const conversations = await Conversation.findUserConversations(
-      req.user._id,
-      parseInt(limit),
-      parseInt(skip)
-    );
+    const conversations = await Conversation.findUserConversations(req.user.userId);
 
     res.json({
       success: true,

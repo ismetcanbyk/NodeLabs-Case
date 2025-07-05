@@ -1,28 +1,332 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import cors from 'cors';
-import helmet from 'helmet';
-import morgan from 'morgan';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
-import cron from 'node-cron';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { instrument } from '@socket.io/admin-ui';
 import dotenv from 'dotenv';
-import User from './models/User.js';
-import connectDB from './config/database.js';
-import { authenticateToken } from './middleware/auth.js';
+import mongoose from 'mongoose';
+import jwt from 'jsonwebtoken';
+import cron from 'node-cron';
+
+// Routes
 import authRoutes from './routes/auth.js';
-import userRoutes from './routes/user.js';
 import messageRoutes from './routes/message.js';
 import conversationRoutes from './routes/conversation.js';
+import userRoutes from './routes/user.js';
 
+// Services
+import redisService from './services/redisService.js';
+import rabbitService from './services/rabbitService.js';
+import cronService from './services/cronService.js';
 
+// Middleware
+import authenticateToken from './middleware/auth.js';
+
+// Load environment variables
 dotenv.config();
 
 const app = express();
 const server = createServer(app);
+
+// CORS configuration
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
+
+app.use(express.json());
+
+// MongoDB connection
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('✅ MongoDB connected successfully');
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error);
+    process.exit(1);
+  }
+};
+
+// Redis connection
+const connectRedis = async () => {
+  try {
+    await redisService.connect();
+    console.log('✅ Redis connection initialized');
+  } catch (error) {
+    console.error('❌ Redis connection failed:', error);
+  }
+};
+
+// RabbitMQ connection
+const connectRabbitMQ = async () => {
+  try {
+    await rabbitService.connect();
+    console.log('✅ RabbitMQ connection initialized');
+
+    // Start message consumer
+    if (rabbitService.isConnected) {
+      await rabbitService.startMessageConsumer(cronService.handleMessageDistribution.bind(cronService));
+      console.log('✅ RabbitMQ message consumer started');
+    }
+  } catch (error) {
+    console.error('❌ RabbitMQ connection failed:', error);
+  }
+};
+
+// Initialize all services
+const initializeServices = async () => {
+  await connectDB();
+  await connectRedis();
+  await connectRabbitMQ();
+
+  // Start cron jobs
+  cronService.startAllJobs();
+  console.log('✅ All services initialized successfully');
+};
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/conversations', conversationRoutes);
+app.use('/api/user', userRoutes);
+
+// Root endpoint - API bilgisi
+app.get('/', (req, res) => {
+  res.json({
+    message: 'NodeLabs Real-Time Messaging API',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      auth: [
+        'POST /api/auth/register',
+        'POST /api/auth/login',
+        'POST /api/auth/refresh',
+        'POST /api/auth/logout',
+        'GET /api/auth/me'
+      ],
+      users: [
+        'GET /api/user/list'
+      ],
+      messages: [
+        'POST /api/messages/send',
+        'GET /api/messages/:conversationId',
+        'PUT /api/messages/:messageId/read'
+      ],
+      conversations: [
+        'GET /api/conversations'
+      ],
+      system: [
+        'GET /api/system/status',
+        'GET /api/system/queue-stats',
+        'POST /api/system/trigger-planning',
+        'POST /api/system/trigger-queue',
+        'POST /api/system/create-test-message',
+        'POST /api/system/start-test-planning-cron',
+        'POST /api/system/stop-test-planning-cron'
+      ]
+    },
+    services: {
+      mongodb: mongoose.connection.readyState === 1,
+      redis: redisService.isConnected,
+      rabbitmq: rabbitService.isConnected,
+      cronJobs: cronService.isRunning
+    }
+  });
+});
+
+// System status endpoint - Public (no auth required for monitoring)
+app.get('/api/system/status', async (req, res) => {
+  try {
+    const onlineUsers = await redisService.getOnlineUserCount();
+    const queueInfo = await rabbitService.getQueueInfo();
+    const failedMessages = await rabbitService.getFailedMessages();
+
+    res.json({
+      system: {
+        uptime: process.uptime(),
+        node_version: process.version
+      },
+      services: {
+        mongodb: mongoose.connection.readyState === 1,
+        redis: redisService.isConnected,
+        rabbitmq: rabbitService.isConnected,
+        cronJobs: cronService.isRunning
+      },
+      stats: {
+        onlineUsers,
+        messageQueue: queueInfo,
+        failedMessages
+      }
+    });
+  } catch (error) {
+    console.error('Status check error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Queue statistics endpoint
+app.get('/api/system/queue-stats', authenticateToken, async (req, res) => {
+  try {
+    const stats = await cronService.getJobStatistics();
+    res.json(stats);
+  } catch (error) {
+    console.error('Queue stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Manual trigger endpoints for testing
+app.post('/api/system/trigger-planning', authenticateToken, async (req, res) => {
+  try {
+    await cronService.triggerPlanningJob();
+    res.json({ message: 'Message planning job triggered successfully' });
+  } catch (error) {
+    console.error('Manual trigger error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/system/trigger-queue', authenticateToken, async (req, res) => {
+  try {
+    await cronService.triggerQueueJob();
+    res.json({ message: 'Queue management job triggered successfully' });
+  } catch (error) {
+    console.error('Manual trigger error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test için direkt AutoMessage oluşturma endpoint'i
+app.post('/api/system/create-test-message', authenticateToken, async (req, res) => {
+  try {
+    const { receiverId, content, sendInMinutes = 1, template = 'greeting', category = 'special' } = req.body;
+
+    if (!receiverId || !content) {
+      return res.status(400).json({ error: 'receiverId and content required' });
+    }
+
+    // Receiver user kontrolü
+    const receiver = await mongoose.model('User').findById(receiverId);
+    if (!receiver) {
+      return res.status(404).json({ error: 'Receiver user not found' });
+    }
+
+    // Conversation bul veya oluştur
+    let conversation = await mongoose.model('Conversation').findOne({
+      participants: { $all: [req.user.userId, receiverId] }
+    });
+
+    if (!conversation) {
+      conversation = new (mongoose.model('Conversation'))({
+        participants: [req.user.userId, receiverId],
+        isActive: true
+      });
+      await conversation.save();
+    }
+
+    // Test AutoMessage oluştur
+    const sendDate = new Date(Date.now() + (sendInMinutes * 60 * 1000));
+
+    const autoMessage = new (mongoose.model('AutoMessage'))({
+      sender: req.user.userId,
+      receiver: receiverId,
+      conversationId: conversation._id,
+      content: {
+        text: content,
+        template: template  // Valid enum: greeting, motivation, question, fun_fact, compliment, weather, inspiration, reminder, joke, quote
+      },
+      scheduledDate: new Date(),
+      sendDate: sendDate,
+      status: 'scheduled',
+      metadata: {
+        generatedBy: 'manual',
+        batchId: `test_${Date.now()}`,
+        priority: 5,
+        category: category  // Valid enum: daily, weekly, special, emergency
+      }
+    });
+
+    await autoMessage.save();
+
+    res.json({
+      success: true,
+      message: 'Test AutoMessage created successfully',
+      autoMessage: {
+        id: autoMessage._id,
+        sendDate: sendDate,
+        content: content,
+        conversationId: conversation._id
+      }
+    });
+
+  } catch (error) {
+    console.error('Create test message error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test için geçici planning job (her dakika çalışan)
+app.post('/api/system/start-test-planning-cron', authenticateToken, async (req, res) => {
+  try {
+    const { intervalMinutes = 1 } = req.body;
+
+    // Mevcut test job'ı durdur
+    if (global.testPlanningJob) {
+      global.testPlanningJob.stop();
+      delete global.testPlanningJob;
+    }
+
+    // Yeni test cron job'ı başlat
+    const cronPattern = intervalMinutes === 1 ? '* * * * *' : `*/${intervalMinutes} * * * *`;
+
+    global.testPlanningJob = cron.schedule(cronPattern, async () => {
+      console.log('🧪 TEST PLANNING JOB: Starting automatic message planning...');
+      await cronService.triggerPlanningJob();
+    }, {
+      scheduled: false
+    });
+
+    global.testPlanningJob.start();
+
+    res.json({
+      success: true,
+      message: `Test planning job started - runs every ${intervalMinutes} minute(s)`,
+      cronPattern: cronPattern,
+      note: 'Use /stop-test-planning-cron to stop this test job'
+    });
+
+  } catch (error) {
+    console.error('Start test planning cron error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test planning job'ını durdur
+app.post('/api/system/stop-test-planning-cron', authenticateToken, async (req, res) => {
+  try {
+    if (global.testPlanningJob) {
+      global.testPlanningJob.stop();
+      delete global.testPlanningJob;
+
+      res.json({
+        success: true,
+        message: 'Test planning job stopped successfully'
+      });
+    } else {
+      res.json({
+        success: false,
+        message: 'No test planning job was running'
+      });
+    }
+
+  } catch (error) {
+    console.error('Stop test planning cron error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Socket.IO Configuration
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -30,234 +334,249 @@ const io = new Server(server, {
   }
 });
 
-// Socket.IO Admin UI
-instrument(io, {
-  auth: false,
-  mode: "development"
-});
-
-// Port Configuration
-const PORT = process.env.PORT || 3000;
-
-// Middleware
-app.use(helmet());
-app.use(cors());
-app.use(morgan('combined'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// MongoDB Connection
-connectDB();
+// Make io globally available for cron service
+global.io = io;
 
 
-// Routes with /api prefix
-app.use('/api/auth', authRoutes);
-app.use('/api/user', userRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/conversations', conversationRoutes);
 
-// Routes
-app.get('/', (req, res) => {
-  res.json({
-    message: 'NodeLabs API Server',
-    status: 'running',
-    version: '1.0.0',
-    endpoints: {
-      auth: '/api/auth/*',
-      user: '/api/user/*',
-      messages: '/api/messages/*',
-      conversations: '/api/conversations',
-      health: '/api/health',
-      protected: '/api/protected'
-    },
-    technologies: [
-      'Node.js',
-      'Express.js',
-      'MongoDB',
-      'JWT',
-      'Socket.IO',
-      'Cron Jobs'
-    ]
-  });
-});
-
-
-// Socket.IO Configuration with JWT Authentication
-const connectedUsers = new Map(); // Store connected users: userId -> socketId
-const userSockets = new Map(); // Store socket connections: socketId -> userId
-
-// JWT Authentication middleware for Socket.IO
-io.use((socket, next) => {
+// Socket.IO JWT Authentication Middleware
+io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
 
     if (!token) {
-      return next(new Error('Authentication token required'));
+      return next(new Error('Authentication error: No token provided'));
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
-    socket.userId = decoded.id;
-    socket.userEmail = decoded.email;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await mongoose.model('User').findById(decoded.userId);
 
+    if (!user || !user.isActive) {
+      return next(new Error('Authentication error: Invalid user'));
+    }
+
+    socket.userId = user._id.toString();
+    socket.username = user.username;
     next();
   } catch (error) {
-    next(new Error('Invalid authentication token'));
+    next(new Error('Authentication error: Invalid token'));
   }
 });
 
-io.on('connection', async (socket) => {
-  console.log(`User ${socket.userId} connected with socket ${socket.id}`);
+// Socket.IO Connection Management with Redis Integration
+const connectedUsers = new Map();
+const userSockets = new Map();
 
-  // Store user connection mapping
+io.on('connection', async (socket) => {
+  console.log(`🔌 User ${socket.username} (${socket.userId}) connected with socket ${socket.id}`);
+
+  // Store connection mappings
   connectedUsers.set(socket.userId, socket.id);
   userSockets.set(socket.id, socket.userId);
 
-  // Notify other users that this user is online
-  socket.broadcast.emit('user_online', {
-    userId: socket.userId,
-    timestamp: new Date()
-  });
+  // Add user to Redis online users list
+  await redisService.addOnlineUser(socket.userId);
 
-  // Get user's conversations and join rooms
+  // Join user to their conversations
   try {
-    const Conversation = mongoose.model('Conversation');
-    const userConversations = await Conversation.find({
-      participants: socket.userId,
-      isActive: true
+    const conversations = await mongoose.model('Conversation').find({
+      participants: socket.userId
     });
 
-    userConversations.forEach(conversation => {
-      socket.join(conversation._id.toString());
-      console.log(`User ${socket.userId} joined conversation room: ${conversation._id}`);
+    conversations.forEach(conv => {
+      socket.join(conv._id.toString());
     });
   } catch (error) {
     console.error('Error joining user conversations:', error);
   }
 
-  // Handle joining specific conversation room
-  socket.on('join_room', (conversationId) => {
-    socket.join(conversationId);
-    console.log(`User ${socket.userId} manually joined conversation: ${conversationId}`);
+  // Broadcast user online status
+  socket.broadcast.emit('user_online', {
+    userId: socket.userId,
+    username: socket.username,
+    timestamp: new Date()
+  });
 
-    socket.emit('joined_room', {
+  // Handle joining specific conversation rooms
+  socket.on('join_room', (data) => {
+    const { conversationId } = data;
+    socket.join(conversationId);
+    console.log(`📝 User ${socket.username} joined conversation ${conversationId}`);
+
+    socket.emit('room_joined', {
       conversationId,
       message: 'Successfully joined conversation'
     });
   });
 
-  // Handle leaving conversation room
-  socket.on('leave_room', (conversationId) => {
+  // Handle leaving conversation rooms
+  socket.on('leave_room', (data) => {
+    const { conversationId } = data;
     socket.leave(conversationId);
-    console.log(`User ${socket.userId} left conversation: ${conversationId}`);
+    console.log(`📤 User ${socket.username} left conversation ${conversationId}`);
 
-    socket.emit('left_room', {
+    socket.emit('room_left', {
       conversationId,
       message: 'Successfully left conversation'
     });
   });
 
   // Handle real-time message sending
-  socket.on('send_message', (data) => {
-    const { conversationId, message } = data;
+  socket.on('send_message', async (data) => {
+    try {
+      const { conversationId, content, messageType = 'text' } = data;
 
-    // Validate required fields
-    if (!conversationId || !message) {
-      socket.emit('message_error', {
-        error: 'conversationId and message are required'
+      // Validate required fields
+      if (!conversationId || !content?.text) {
+        socket.emit('error', { message: 'Invalid message data' });
+        return;
+      }
+
+      // Create new message in database
+      const Message = mongoose.model('Message');
+      const newMessage = new Message({
+        conversation: conversationId,
+        sender: socket.userId,
+        content,
+        messageType,
+        status: 'sent'
       });
-      return;
+
+      await newMessage.save();
+      await newMessage.populate('sender', 'username');
+
+      // Update conversation
+      const Conversation = mongoose.model('Conversation');
+      await Conversation.findByIdAndUpdate(conversationId, {
+        lastMessage: newMessage._id,
+        lastMessageTime: new Date(),
+        $inc: { totalMessages: 1 }
+      });
+
+      // Emit to conversation room
+      io.to(conversationId).emit('message_received', {
+        messageId: newMessage._id,
+        conversationId,
+        from: {
+          id: socket.userId,
+          username: socket.username
+        },
+        content: newMessage.content,
+        messageType: newMessage.messageType,
+        timestamp: newMessage.createdAt
+      });
+
+      console.log(`💬 Message sent by ${socket.username} to conversation ${conversationId}`);
+
+    } catch (error) {
+      console.error('Send message error:', error);
+      socket.emit('error', { message: 'Failed to send message' });
     }
-
-    // Broadcast message to conversation room (except sender)
-    socket.to(conversationId).emit('message_received', {
-      messageId: message._id || null,
-      conversationId,
-      sender: {
-        id: socket.userId,
-        username: message.sender?.username || 'Unknown'
-      },
-      content: message.content,
-      timestamp: message.createdAt || new Date(),
-      messageType: message.messageType || 'text'
-    });
-
-    console.log(`Message sent from ${socket.userId} to conversation ${conversationId}`);
   });
-
-
 
   // Handle message read status
-  socket.on('message_read', (data) => {
-    const { conversationId, messageId } = data;
-    socket.to(conversationId).emit('message_status_update', {
-      messageId,
-      conversationId,
-      status: 'read',
-      readBy: socket.userId,
-      timestamp: new Date()
-    });
+  socket.on('mark_message_read', async (data) => {
+    try {
+      const { messageId, conversationId } = data;
+
+      const Message = mongoose.model('Message');
+      await Message.findByIdAndUpdate(messageId, {
+        $addToSet: { readBy: socket.userId },
+        status: 'read'
+      });
+
+      // Notify conversation participants
+      socket.to(conversationId).emit('message_read', {
+        messageId,
+        conversationId,
+        readBy: socket.userId,
+        timestamp: new Date()
+      });
+
+    } catch (error) {
+      console.error('Mark message read error:', error);
+    }
   });
 
-  // Get online users list
-  socket.on('get_online_users', () => {
-    const onlineUsers = Array.from(connectedUsers.keys());
-    socket.emit('online_users_list', {
-      users: onlineUsers,
-      count: onlineUsers.length
-    });
+  // Get online users in conversation
+  socket.on('get_online_users', async (data) => {
+    try {
+      const { conversationId } = data;
+      const conversation = await mongoose.model('Conversation').findById(conversationId);
+
+      if (!conversation) {
+        socket.emit('error', { message: 'Conversation not found' });
+        return;
+      }
+
+      const onlineUsers = [];
+      for (const participantId of conversation.participants) {
+        const isOnline = await redisService.isUserOnline(participantId.toString());
+        if (isOnline) {
+          onlineUsers.push(participantId);
+        }
+      }
+
+      socket.emit('online_users_list', {
+        conversationId,
+        onlineUsers,
+        count: onlineUsers.length
+      });
+
+    } catch (error) {
+      console.error('Get online users error:', error);
+    }
   });
 
-  // Check if specific user is online
-  socket.on('check_user_status', (userId) => {
-    const isOnline = connectedUsers.has(userId);
-    socket.emit('user_status_response', {
-      userId,
-      isOnline,
-      timestamp: new Date()
-    });
-  });
+  // Handle disconnection
+  socket.on('disconnect', async () => {
+    console.log(`🔌 User ${socket.username} (${socket.userId}) disconnected`);
 
-  // Handle user disconnect
-  socket.on('disconnect', () => {
-    console.log(`User ${socket.userId} disconnected (socket: ${socket.id})`);
-
-    // Remove user from connection mappings
+    // Remove from mappings
     connectedUsers.delete(socket.userId);
     userSockets.delete(socket.id);
 
-    // Notify other users that this user is offline
+    // Remove from Redis online users list
+    await redisService.removeOnlineUser(socket.userId);
+
+    // Broadcast user offline status
     socket.broadcast.emit('user_offline', {
       userId: socket.userId,
+      username: socket.username,
       timestamp: new Date()
     });
   });
-
-  // Handle connection errors
-  socket.on('error', (error) => {
-    console.error(`Socket error for user ${socket.userId}:`, error);
-  });
 });
 
-// Error Handling Middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
-
-// 404 Handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-// Start Server
-server.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log('Server initialized successfully');
-});
-
-// Graceful Shutdown
+// Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('Shutting down gracefully...');
-  await mongoose.connection.close();
-  process.exit(0);
-}); 
+  console.log('\n🛑 Shutting down gracefully...');
+
+  try {
+    // Stop cron jobs
+    cronService.stopAllJobs();
+
+    // Disconnect services
+    await redisService.disconnect();
+    await rabbitService.disconnect();
+    await mongoose.connection.close();
+
+    console.log('✅ All services disconnected successfully');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error);
+    process.exit(1);
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+
+// Initialize services and start server
+initializeServices().then(() => {
+  server.listen(PORT, () => {
+    console.log(`\n🚀 Server running on port ${PORT}`);
+  });
+}).catch((error) => {
+  console.error('❌ Failed to initialize services:', error);
+  process.exit(1);
+});

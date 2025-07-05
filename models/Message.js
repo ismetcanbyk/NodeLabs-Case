@@ -60,14 +60,12 @@ messageSchema.index({ sender: 1, createdAt: -1 });
 messageSchema.index({ conversation: 1, sender: 1 });
 
 // Static method to find conversation messages
-messageSchema.statics.findConversationMessages = function (conversationId, limit = 50, skip = 0) {
+messageSchema.statics.findConversationMessages = function (conversationId) {
   return this.find({
     conversation: conversationId
   })
     .populate('sender', 'username profile.firstName profile.lastName profile.avatar')
     .sort({ createdAt: -1 })
-    .limit(limit)
-    .skip(skip);
 };
 
 // Static method to get unread messages for user

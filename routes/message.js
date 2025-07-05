@@ -1,7 +1,7 @@
 import express from 'express';
 import Message from '../models/Message.js';
 import Conversation from '../models/Conversation.js';
-import { authenticateToken } from '../middleware/auth.js';
+import authenticateToken from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ router.post('/send', authenticateToken, async (req, res) => {
     if (conversationId) {
       conversation = await Conversation.findById(conversationId);
     } else if (receiverId) {
-      conversation = await Conversation.createOrGet([req.user._id, receiverId]);
+      conversation = await Conversation.createOrGet([req.user.userId, receiverId]);
     }
 
     if (!conversation) {
@@ -24,7 +24,7 @@ router.post('/send', authenticateToken, async (req, res) => {
 
     const message = new Message({
       conversation: conversation._id,
-      sender: req.user._id,
+      sender: req.user.userId,
       content: { text: content },
       messageType: 'text'
     });
@@ -51,18 +51,13 @@ router.post('/send', authenticateToken, async (req, res) => {
 router.get('/:conversationId', authenticateToken, async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const { limit = 50, skip = 0 } = req.query;
 
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation || !conversation.participants.includes(req.user._id)) {
+    if (!conversation || !conversation.participants.includes(req.user.userId)) {
       return res.status(403).json({ error: 'Access denied to this conversation' });
     }
 
-    const messages = await Message.findConversationMessages(
-      conversationId,
-      parseInt(limit),
-      parseInt(skip)
-    );
+    const messages = await Message.findConversationMessages(conversationId);
 
     res.json({
       success: true,
@@ -83,7 +78,7 @@ router.put('/:messageId/read', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    await message.markAsRead(req.user._id);
+    await message.markAsRead(req.user.userId);
 
     res.json({
       success: true,
