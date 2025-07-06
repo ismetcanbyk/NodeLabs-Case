@@ -12,9 +12,9 @@ class CronService {
     this.isRunning = false;
   }
 
-  // 1. ADIM: Mesaj Planlama Servisi (Gece 02:00)
+  // STEP 1: Message Planning Service (Night 02:00)
   startMessagePlanningJob() {
-    // Her gece saat 02:00'da çalışır
+    // Runs every night at 02:00
     this.planningJob = cron.schedule('0 2 * * *', async () => {
       console.log('🕒 Starting automatic message planning job at 02:00...');
       await this.planAutoMessages();
@@ -27,9 +27,9 @@ class CronService {
     console.log('✅ Message planning cron job scheduled for 02:00 daily');
   }
 
-  // 2. ADIM: Kuyruk Yönetimi Servisi (Her dakika)
+  // STEP 2: Queue Management Service (Every minute)
   startQueueManagementJob() {
-    // Her dakika çalışır
+    // Runs every minute
     this.queueJob = cron.schedule('* * * * *', async () => {
       console.log('📥 Checking for messages ready to queue...');
       await this.processQueueManagement();
@@ -41,12 +41,12 @@ class CronService {
     console.log('✅ Queue management cron job scheduled to run every minute');
   }
 
-  // Mesaj Planlama Algoritması
+  // Message Planning Algorithm
   async planAutoMessages() {
     try {
       console.log('📋 Starting message planning process...');
 
-      // Aktif kullanıcıları çek
+      // Get active users
       const activeUsers = await User.find({
         isActive: true,
       }).select('_id username email');
@@ -60,10 +60,10 @@ class CronService {
 
       console.log(`👥 Found ${activeUsers.length} active users`);
 
-      // Kullanıcı listesini rastgele karıştır (shuffle)
+      // Randomly shuffle user list (shuffle)
       const shuffledUsers = this.shuffleArray([...activeUsers]);
 
-      // İkişerli gruplara ayır
+      // Divide into pairs
       const pairs = [];
       for (let i = 0; i < shuffledUsers.length - 1; i += 2) {
         const sender = shuffledUsers[i];
@@ -73,12 +73,12 @@ class CronService {
 
       console.log(`💌 Created ${pairs.length} user pairs`);
 
-      // Her çift için otomatik mesaj oluştur
+      // Create automatic message for each pair
       const batchId = `batch_${Date.now()}`;
       const autoMessages = [];
 
       for (const pair of pairs) {
-        // Konuşma bul veya oluştur
+        // Find or create conversation
         let conversation = await Conversation.findOne({
           participants: { $all: [pair.sender._id, pair.receiver._id] }
         });
@@ -91,10 +91,10 @@ class CronService {
           await conversation.save();
         }
 
-        // Rastgele mesaj içeriği ve gönderim zamanı
+        // Random message content and send time
         const messageContent = this.generateRandomMessage();
-        const sendDate = this.generateRandomSendDate();
-
+        //   const sendRandomDate = this.generateRandomSendDate();
+        const sendDate = new Date(Date.now() + 60 * 1000);
         const autoMessage = {
           sender: pair.sender._id,
           receiver: pair.receiver._id,
@@ -109,7 +109,7 @@ class CronService {
           metadata: {
             generatedBy: 'cron_job',
             batchId: batchId,
-            priority: Math.floor(Math.random() * 5) + 3, // 3-7 arası priority
+            priority: Math.floor(Math.random() * 5) + 3, // Priority between 3-7
             category: 'daily'
           }
         };
@@ -121,7 +121,7 @@ class CronService {
       const savedMessages = await AutoMessage.insertMany(autoMessages);
       console.log(`✅ Successfully planned ${savedMessages.length} auto messages for batch ${batchId}`);
 
-      // İstatistik log
+      // Statistics log
       const nextSendTime = Math.min(...autoMessages.map(m => m.sendDate.getTime()));
       console.log(`📅 Next message will be sent at: ${new Date(nextSendTime)}`);
 
@@ -130,25 +130,25 @@ class CronService {
     }
   }
 
-  // Kuyruk Yönetimi İşlemi
+  // Queue Management Process
   async processQueueManagement() {
     try {
-      // Gönderim zamanı gelen ve henüz kuyruğa alınmamış mesajları bul
+      // Find messages that are ready to send and not yet queued
       const readyMessages = await AutoMessage.findReadyForQueue();
 
       if (readyMessages.length === 0) {
-        return; // Sessizce çık, log spam'ı önlemek için
+        return; // Exit silently to prevent log spam
       }
 
       console.log(`🔄 Found ${readyMessages.length} messages ready for queue processing`);
 
       for (const autoMessage of readyMessages) {
         try {
-          // RabbitMQ kuyruğuna gönder
+          // Send to RabbitMQ queue
           const success = await rabbitService.sendAutoMessageToQueue(autoMessage);
 
           if (success) {
-            // AutoMessage'ı isQueued: true olarak güncelle
+            // Update AutoMessage as isQueued: true
             await AutoMessage.findByIdAndUpdate(autoMessage._id, {
               isQueued: true,
               queuedAt: new Date(),
@@ -157,7 +157,7 @@ class CronService {
 
             console.log(`📤 Message ${autoMessage._id} queued successfully`);
           } else {
-            // Hata durumunda retry count artır
+            // Increase retry count in case of error
             await AutoMessage.findByIdAndUpdate(autoMessage._id, {
               $inc: { 'error.retryCount': 1 },
               'error.message': 'Failed to queue message',
@@ -183,12 +183,12 @@ class CronService {
     }
   }
 
-  // 3. ADIM: Mesaj Dağıtım Handler (RabbitMQ Consumer için)
+  // STEP 3: Message Distribution Handler (For RabbitMQ Consumer)
   async handleMessageDistribution(messageData) {
     try {
       console.log(`📨 Processing message distribution for ${messageData.autoMessageId}`);
 
-      // AutoMessage'ı bul
+      // 1. AutoMessage bul
       const autoMessage = await AutoMessage.findById(messageData.autoMessageId)
         .populate('sender receiver conversationId');
 
@@ -197,14 +197,14 @@ class CronService {
         return false;
       }
 
-      // Conversation'ı bul
-      let conversation = await Conversation.findById(autoMessage.conversationId);
+      // 2. Find conversation
+      const conversation = await Conversation.findById(autoMessage.conversationId);
       if (!conversation) {
         console.error(`❌ Conversation not found: ${autoMessage.conversationId}`);
         return false;
       }
 
-      // Yeni Message oluştur
+      // 3. Create new message
       const newMessage = new Message({
         conversation: conversation._id,
         sender: autoMessage.sender._id,
@@ -216,15 +216,25 @@ class CronService {
       });
 
       await newMessage.save();
+      console.log(`💾 Message saved with ID: ${newMessage._id}`);
 
-      // Conversation'ı güncelle
-      await Conversation.findByIdAndUpdate(conversation._id, {
-        lastMessage: newMessage._id,
-        lastMessageTime: new Date(),
-        $inc: { totalMessages: 1 }
-      });
+      const conversationUpdate = await Conversation.findByIdAndUpdate(
+        conversation._id,
+        {
+          lastMessage: newMessage._id,
+          lastMessageTime: new Date(),
+          $inc: { totalMessages: 1 }
+        },
+        { new: true }
+      );
 
-      // AutoMessage'ı tamamlandı olarak işaretle
+      if (!conversationUpdate) {
+        console.error(`❗ Conversation update failed for ID: ${conversation._id}`);
+      } else {
+        console.log(`✅ Conversation updated: ${conversation._id}`);
+      }
+
+      // 5. AutoMessage güncelle
       await AutoMessage.findByIdAndUpdate(autoMessage._id, {
         isSent: true,
         sentAt: new Date(),
@@ -232,15 +242,12 @@ class CronService {
         messageId: newMessage._id
       });
 
-
-
       console.log(`✅ Message ${messageData.autoMessageId} distributed successfully`);
       return true;
 
     } catch (error) {
       console.error(`❌ Error in message distribution for ${messageData.autoMessageId}:`, error);
 
-      // AutoMessage'ı failed olarak işaretle
       try {
         await AutoMessage.findByIdAndUpdate(messageData.autoMessageId, {
           status: 'failed',
@@ -249,14 +256,15 @@ class CronService {
           $inc: { 'error.retryCount': 1 }
         });
       } catch (updateError) {
-        console.error('Failed to update AutoMessage status:', updateError);
+        console.error('❌ Failed to update AutoMessage status:', updateError);
       }
 
       return false;
     }
   }
 
-  // Yardımcı metodlar
+
+  // Helper methods
   shuffleArray(array) {
     const shuffled = [...array];
     for (let i = shuffled.length - 1; i > 0; i--) {
@@ -320,7 +328,7 @@ class CronService {
   }
 
   generateRandomSendDate() {
-    // Şimdi + 1 saat ile şimdi + 24 saat arası rastgele zaman
+    // Random time between now + 1 hour and now + 24 hours
     const now = new Date();
     const minHours = 1;
     const maxHours = 24;
@@ -329,7 +337,7 @@ class CronService {
     return new Date(now.getTime() + (randomHours * 60 * 60 * 1000));
   }
 
-  // Cron job'ları başlat
+  // Start cron jobs
   startAllJobs() {
     console.log('🚀 Starting all cron jobs...');
     this.startMessagePlanningJob();
@@ -338,7 +346,7 @@ class CronService {
     console.log('✅ All cron jobs started successfully');
   }
 
-  // Cron job'ları durdur
+  // Stop cron jobs
   stopAllJobs() {
     console.log('🛑 Stopping all cron jobs...');
 
@@ -356,7 +364,7 @@ class CronService {
     console.log('✅ All cron jobs stopped');
   }
 
-  // Test için manuel tetikleme
+  // Manual trigger for testing
   async triggerPlanningJob() {
     console.log('🧪 Manually triggering message planning job...');
     await this.planAutoMessages();
@@ -367,7 +375,7 @@ class CronService {
     await this.processQueueManagement();
   }
 
-  // İstatistik
+  // Statistics
   async getJobStatistics() {
     try {
       const stats = await AutoMessage.getStatistics();

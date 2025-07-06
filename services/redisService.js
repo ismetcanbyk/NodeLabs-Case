@@ -36,7 +36,7 @@ class RedisService {
     }
   }
 
-  // Online kullanıcı takibi
+  // Online user tracking
   async addOnlineUser(userId) {
     try {
       await this.client.sAdd('online_users', userId);
@@ -86,7 +86,7 @@ class RedisService {
     }
   }
 
-  // Konuşma cache yönetimi
+  // Conversation cache management
   async cacheConversation(conversationId, data, ttl = 3600) {
     try {
       await this.client.setEx(`conversation:${conversationId}`, ttl, JSON.stringify(data));

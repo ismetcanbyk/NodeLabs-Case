@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { instrument } from '@socket.io/admin-ui';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
@@ -27,6 +27,24 @@ dotenv.config();
 
 const app = express();
 const server = createServer(app);
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false
+}));
 
 // CORS configuration
 app.use(cors({
@@ -91,7 +109,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/user', userRoutes);
 
-// Root endpoint - API bilgisi
+// Root endpoint - API information
 app.get('/', (req, res) => {
   res.json({
     message: 'NodeLabs Real-Time Messaging API',
@@ -165,7 +183,7 @@ app.get('/api/system/status', async (req, res) => {
   }
 });
 
-// Queue statistics endpoint
+// Queue statistics endpoint 
 app.get('/api/system/queue-stats', authenticateToken, async (req, res) => {
   try {
     const stats = await cronService.getJobStatistics();
@@ -197,7 +215,7 @@ app.post('/api/system/trigger-queue', authenticateToken, async (req, res) => {
   }
 });
 
-// Test için direkt AutoMessage oluşturma endpoint'i
+// Direct AutoMessage creation endpoint for testing
 app.post('/api/system/create-test-message', authenticateToken, async (req, res) => {
   try {
     const { receiverId, content, sendInMinutes = 1, template = 'greeting', category = 'special' } = req.body;
@@ -206,13 +224,13 @@ app.post('/api/system/create-test-message', authenticateToken, async (req, res) 
       return res.status(400).json({ error: 'receiverId and content required' });
     }
 
-    // Receiver user kontrolü
+    // Receiver user validation
     const receiver = await mongoose.model('User').findById(receiverId);
     if (!receiver) {
       return res.status(404).json({ error: 'Receiver user not found' });
     }
 
-    // Conversation bul veya oluştur
+    // Find or create conversation
     let conversation = await mongoose.model('Conversation').findOne({
       participants: { $all: [req.user.userId, receiverId] }
     });
@@ -225,7 +243,7 @@ app.post('/api/system/create-test-message', authenticateToken, async (req, res) 
       await conversation.save();
     }
 
-    // Test AutoMessage oluştur
+    // Create test AutoMessage
     const sendDate = new Date(Date.now() + (sendInMinutes * 60 * 1000));
 
     const autoMessage = new (mongoose.model('AutoMessage'))({
@@ -266,18 +284,18 @@ app.post('/api/system/create-test-message', authenticateToken, async (req, res) 
   }
 });
 
-// Test için geçici planning job (her dakika çalışan)
+// Temporary planning job for testing (runs every minute)
 app.post('/api/system/start-test-planning-cron', authenticateToken, async (req, res) => {
   try {
     const { intervalMinutes = 1 } = req.body;
 
-    // Mevcut test job'ı durdur
+    // Stop existing test job
     if (global.testPlanningJob) {
       global.testPlanningJob.stop();
       delete global.testPlanningJob;
     }
 
-    // Yeni test cron job'ı başlat
+    // Start new test cron job
     const cronPattern = intervalMinutes === 1 ? '* * * * *' : `*/${intervalMinutes} * * * *`;
 
     global.testPlanningJob = cron.schedule(cronPattern, async () => {
@@ -302,7 +320,7 @@ app.post('/api/system/start-test-planning-cron', authenticateToken, async (req, 
   }
 });
 
-// Test planning job'ını durdur
+// Stop test planning job
 app.post('/api/system/stop-test-planning-cron', authenticateToken, async (req, res) => {
   try {
     if (global.testPlanningJob) {

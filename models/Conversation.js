@@ -49,16 +49,14 @@ conversationSchema.statics.findBetweenUsers = function (userId1, userId2) {
 };
 
 // Static method to find user's conversations
-conversationSchema.statics.findUserConversations = function (userId, limit = 20, skip = 0) {
+conversationSchema.statics.findUserConversations = function (userId) {
   return this.find({
     participants: userId,
     isActive: true
   })
     .populate('participants', 'username email profile.firstName profile.lastName profile.avatar')
     .populate('lastMessage')
-    .sort({ lastMessageTime: -1 })
-    .limit(limit)
-    .skip(skip);
+    .sort({ lastMessageTime: -1 });
 };
 
 // Static method to create or get conversation between users

@@ -65,7 +65,7 @@ class RabbitService {
     }
   }
 
-  // Message Producer - Otomatik mesajları kuyruğa ekleme
+  // Message Producer - Adding automatic messages to queue
   async sendAutoMessageToQueue(autoMessageData) {
     try {
       if (!this.isConnected || !this.channel) {
@@ -102,7 +102,7 @@ class RabbitService {
     }
   }
 
-  // Message Consumer - Kuyruktan mesajları işleme
+  // Message Consumer - Processing messages from queue
   async startMessageConsumer(messageHandler) {
     try {
       if (!this.isConnected || !this.channel) {
@@ -149,7 +149,7 @@ class RabbitService {
     }
   }
 
-  // Hata yönetimi ve tekrar deneme
+  // Error handling and retry
   async handleMessageFailure(msg, messageData, error = null) {
     try {
       const retryCount = (messageData?.retryCount || 0) + 1;
@@ -192,7 +192,7 @@ class RabbitService {
     }
   }
 
-  // Queue durumu kontrol etme
+  // Check queue status
   async getQueueInfo(queueName = 'message_sending_queue') {
     try {
       if (!this.isConnected || !this.channel) {
@@ -211,7 +211,7 @@ class RabbitService {
     }
   }
 
-  // Failed messages'ları kontrol etme
+  // Check failed messages
   async getFailedMessages() {
     try {
       if (!this.isConnected || !this.channel) {
