@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import dotenv from 'dotenv';
@@ -45,6 +46,54 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false
 }));
+
+// Rate limiting configurations
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: {
+    error: 'Too many requests from this IP, please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 auth requests per windowMs
+  message: {
+    error: 'Too many authentication attempts, please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const systemLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 10, // Limit each IP to 10 system requests per windowMs
+  message: {
+    error: 'Too many system requests, please try again later.',
+    retryAfter: '5 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const messageLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 30, // Limit each IP to 30 messages per minute
+  message: {
+    error: 'Too many messages sent, please slow down.',
+    retryAfter: '1 minute'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply general rate limiting to all requests
+app.use(generalLimiter);
 
 // CORS configuration
 app.use(cors({
@@ -103,9 +152,9 @@ const initializeServices = async () => {
   console.log('✅ All services initialized successfully');
 };
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/messages', messageRoutes);
+// Routes with specific rate limiting
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/messages', messageLimiter, messageRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/user', userRoutes);
 
@@ -183,8 +232,8 @@ app.get('/api/system/status', async (req, res) => {
   }
 });
 
-// Queue statistics endpoint 
-app.get('/api/system/queue-stats', authenticateToken, async (req, res) => {
+// Queue statistics endpoint
+app.get('/api/system/queue-stats', systemLimiter, authenticateToken, async (req, res) => {
   try {
     const stats = await cronService.getJobStatistics();
     res.json(stats);
@@ -195,7 +244,7 @@ app.get('/api/system/queue-stats', authenticateToken, async (req, res) => {
 });
 
 // Manual trigger endpoints for testing
-app.post('/api/system/trigger-planning', authenticateToken, async (req, res) => {
+app.post('/api/system/trigger-planning', systemLimiter, authenticateToken, async (req, res) => {
   try {
     await cronService.triggerPlanningJob();
     res.json({ message: 'Message planning job triggered successfully' });
@@ -205,7 +254,7 @@ app.post('/api/system/trigger-planning', authenticateToken, async (req, res) => 
   }
 });
 
-app.post('/api/system/trigger-queue', authenticateToken, async (req, res) => {
+app.post('/api/system/trigger-queue', systemLimiter, authenticateToken, async (req, res) => {
   try {
     await cronService.triggerQueueJob();
     res.json({ message: 'Queue management job triggered successfully' });
@@ -216,7 +265,7 @@ app.post('/api/system/trigger-queue', authenticateToken, async (req, res) => {
 });
 
 // Direct AutoMessage creation endpoint for testing
-app.post('/api/system/create-test-message', authenticateToken, async (req, res) => {
+app.post('/api/system/create-test-message', systemLimiter, authenticateToken, async (req, res) => {
   try {
     const { receiverId, content, sendInMinutes = 1, template = 'greeting', category = 'special' } = req.body;
 
@@ -285,7 +334,7 @@ app.post('/api/system/create-test-message', authenticateToken, async (req, res) 
 });
 
 // Temporary planning job for testing (runs every minute)
-app.post('/api/system/start-test-planning-cron', authenticateToken, async (req, res) => {
+app.post('/api/system/start-test-planning-cron', systemLimiter, authenticateToken, async (req, res) => {
   try {
     const { intervalMinutes = 1 } = req.body;
 
@@ -321,7 +370,7 @@ app.post('/api/system/start-test-planning-cron', authenticateToken, async (req, 
 });
 
 // Stop test planning job
-app.post('/api/system/stop-test-planning-cron', authenticateToken, async (req, res) => {
+app.post('/api/system/stop-test-planning-cron', systemLimiter, authenticateToken, async (req, res) => {
   try {
     if (global.testPlanningJob) {
       global.testPlanningJob.stop();

@@ -26,7 +26,7 @@ A comprehensive real-time messaging API built with Node.js, featuring automatic 
 - **Helmet.js** for security headers
 - **CORS** configuration
 - **Input validation** and sanitization
-- **Rate limiting** protection
+- **Rate limiting** with express-rate-limit
 - **Token blacklisting** system
 
 ### Architecture
@@ -47,7 +47,7 @@ A comprehensive real-time messaging API built with Node.js, featuring automatic 
 - **Message Queue**: RabbitMQ
 - **Real-time**: Socket.IO
 - **Authentication**: JWT
-- **Security**: Helmet.js
+- **Security**: Helmet.js, express-rate-limit
 - **Task Scheduling**: node-cron
 - **Environment**: dotenv
 
@@ -358,6 +358,27 @@ Open `test-socket.html` in your browser for interactive WebSocket testing.
 - **Rate limiting**: API abuse prevention
 - **Token blacklisting**: Logout security
 - **Error handling**: Information disclosure prevention
+
+### Rate Limiting Configuration
+
+The API implements multiple layers of rate limiting to prevent abuse:
+
+| Endpoint Type      | Limit        | Window     | Description                 |
+| ------------------ | ------------ | ---------- | --------------------------- |
+| **General API**    | 100 requests | 15 minutes | Applied to all endpoints    |
+| **Authentication** | 5 requests   | 15 minutes | Login, register, refresh    |
+| **Messaging**      | 30 requests  | 1 minute   | Send message endpoints      |
+| **System Admin**   | 10 requests  | 5 minutes  | System management endpoints |
+
+#### Rate Limit Response
+
+```json
+HTTP/1.1 429 Too Many Requests
+{
+  "error": "Too many requests from this IP, please try again later.",
+  "retryAfter": "15 minutes"
+}
+```
 
 ## 📈 Performance Optimization
 
